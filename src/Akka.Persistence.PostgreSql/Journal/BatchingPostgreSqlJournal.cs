@@ -67,17 +67,19 @@ namespace Akka.Persistence.PostgreSql.Journal
         private readonly Func<IPersistentRepresentation, SerializationResult> _serialize;
         private readonly Func<Type, object, string, int?, object> _deserialize;
         private readonly ITimestampProvider _timestampProvider;
+        private readonly Akka.Serialization.Serialization _serialization;
         public BatchingPostgreSqlJournal(Config config)
             : this(new BatchingPostgresJournalSetup(config))
         {
             _timestampProvider = GetTimestampProvider(config.GetString("timestamp-provider"));
+            _serialization = Context.System.Serialization;
         }
 
         public BatchingPostgreSqlJournal(BatchingPostgresJournalSetup setup) : base(setup)
         {
             var conventions = Setup.NamingConventions;
             ByTagSql = $@"
-             SELECT TOP (@Take)
+             SELECT
              e.{conventions.PersistenceIdColumnName} as PersistenceId, 
              e.{conventions.SequenceNrColumnName} as SequenceNr, 
              e.{conventions.TimestampColumnName} as Timestamp, 
@@ -89,6 +91,7 @@ namespace Akka.Persistence.PostgreSql.Journal
              FROM {conventions.FullJournalTableName} e
              WHERE e.{conventions.OrderingColumnName} > @Ordering AND e.{conventions.TagsColumnName} LIKE @Tag
              ORDER BY {conventions.OrderingColumnName} ASC
+             LIMIT @Take
              ";
             Initializers = ImmutableDictionary.CreateRange(new[]
             {
@@ -118,19 +121,19 @@ namespace Akka.Persistence.PostgreSql.Journal
                 case StoredAsType.ByteA:
                     _serialize = e =>
                     {
-                        var serializer = Context.System.Serialization.FindSerializerFor(e.Payload);
+                        var serializer = _serialization.FindSerializerFor(e.Payload);
                         return new SerializationResult(NpgsqlDbType.Bytea, serializer.ToBinary(e.Payload), serializer);
                     };
                     _deserialize = (type, serialized, manifest, serializerId) =>
                     {
                         if (serializerId.HasValue)
                         {
-                            return Context.System.Serialization.Deserialize((byte[])serialized, serializerId.Value, manifest);
+                            return _serialization.Deserialize((byte[])serialized, serializerId.Value, manifest);
                         }
                         else
                         {
                             // Support old writes that did not set the serializer id
-                            var deserializer = Context.System.Serialization.FindSerializerForType(type, setup.DefaultSerializer);
+                            var deserializer = _serialization.FindSerializerForType(type, setup.DefaultSerializer);
                             return deserializer.FromBinary((byte[])serialized, type);
                         }
                     };
