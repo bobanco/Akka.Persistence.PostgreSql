@@ -60,5 +60,7 @@ namespace Akka.Persistence.PostgreSql.Journal
         {
             return new NpgsqlConnection(connectionString);
         }
+
+
     }
 }
